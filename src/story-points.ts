@@ -3,12 +3,27 @@ import { debounce } from './utils';
 const waitMs = 500;
 
 interface State {
-  closed: number;
-  doing: number;
-  open: number;
+  toDO: number;
+  inProgress: number;
+  done: number;
 }
 
-let state: State = { closed: 0, doing: 0, open: 0 };
+let state: State = { toDO: 0, inProgress: 0, done: 0 };
+
+// Used to transform all units to hours (H)
+const pointsTransformations:{
+  [key: string]: (x:number) => number 
+} = {
+  H: function (x: number) {
+    return x;
+  },
+  D: function (x: number) {
+    return x * 8;
+  },
+};
+
+const BACK_END_ESTIMATION_REGEX = /\[(?=(\d+(?:\.\d+)?)(H|D)\])/;
+const FRONT_END_ESTIMATION_REGEX = /<(?=(\d+(?:\.\d+)?)(H|D)>)/;
 
 const columns = () => document.querySelectorAll('.js-project-column');
 
@@ -22,13 +37,13 @@ const accumulatePoint = (link: HTMLLinkElement, point: number) => {
         link.closest('.js-project-column')?.querySelector('h3')?.innerText ??
         '';
 
-      if (h3 && /(doing|progress|wip)/i.test(h3)) {
-        state.doing = state.doing + point;
+      if (h3 && /In\sprogress/i.test(h3)) {
+        state.inProgress = state.inProgress + point;
       } else {
-        state.open = state.open + point;
+        state.toDO = state.toDO + point;
       }
     } else {
-      state.closed = state.closed + point;
+      state.done = state.done + point;
     }
   }
 };
@@ -36,9 +51,17 @@ const accumulatePoint = (link: HTMLLinkElement, point: number) => {
 const getPoint = (links: NodeList) =>
   Array.from(links)
     .map((link: any) => {
-      const match = link.innerText.match(/\[(\d+(.\d+)?)pt\]/);
+      // Need to be updated if more units will be add not just hours (H) and days (D)
+      const match = link.innerText.match(BACK_END_ESTIMATION_REGEX) || link.innerText.match(FRONT_END_ESTIMATION_REGEX);
+      console.log(match);
+      
       if (match) {
-        const point = parseFloat(match[1]);
+        let point = parseFloat(match[1]);
+        const unit:string = match[2];
+        // Transform all estimations to be the same unit
+        
+        point = pointsTransformations[unit](point);
+
         accumulatePoint(link, point);
         return point;
       }
@@ -46,7 +69,7 @@ const getPoint = (links: NodeList) =>
     .filter((n: number | undefined) => typeof n === 'number')
     .reduce(
       (acc: number, n: number | undefined) =>
-        typeof n === 'number' ? acc + n : 0,
+        typeof n === 'number' ? acc + n : acc,
       0,
     );
 
@@ -65,11 +88,11 @@ const setProgress = (progressBar: HTMLElement) => {
   }
 
   (progressBar.querySelector('.bg-green') as HTMLSpanElement).style.width = `${
-    (state.closed / (state.closed + state.doing + state.open)) * 100
+    (state.done / (state.done + state.inProgress + state.toDO)) * 100
   }%`;
 
   (progressBar.querySelector('.bg-purple') as HTMLSpanElement).style.width = `${
-    (state.doing / (state.closed + state.doing + state.open)) * 100
+    (state.inProgress / (state.done + state.inProgress + state.toDO)) * 100
   }%`;
 };
 
@@ -80,9 +103,9 @@ const showTotalPoint = () => {
     const pointNode = document.querySelector(
       '.js-github-story-points-total-counter',
     ) as HTMLSpanElement;
-    const label = `${state.closed}pt / ${
-      state.open + state.doing + state.closed
-    }pt`;
+    const label = `${state.done}H / ${
+      state.toDO + state.inProgress + state.done
+    }H`;
 
     const progressBar = document.querySelector(
       '.progress-bar.progress-bar-small',
@@ -108,16 +131,18 @@ const showTotalPoint = () => {
 
 const callback = () => {
   columns().forEach((column) => {
+    console.log(column)
     const links = column.querySelectorAll(
       '.js-project-column-card:not(.d-none) .js-project-card-issue-link',
     );
 
     const point = getPoint(links);
+    console.log(`Column points ${point}`)
 
     const pointNode = column.querySelector(
       '.js-github-story-points-counter',
     ) as HTMLSpanElement;
-    const label = `${point}pt`;
+    const label = `${point} H`;
 
     if (point === 0 && !pointNode) {
       return;
@@ -141,7 +166,7 @@ const callback = () => {
   });
 
   showTotalPoint();
-  state = { closed: 0, doing: 0, open: 0 };
+  state = { done: 0, inProgress: 0, toDO: 0 };
 };
 
 const observer = new MutationObserver(debounce(callback, waitMs));
@@ -157,3 +182,4 @@ if (!!targetNode) {
 } else {
   throw new Error('.js-project-columns is missing');
 }
+
